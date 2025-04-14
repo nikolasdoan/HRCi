@@ -9,6 +9,7 @@ import { clarifyRequirements } from "@/ai/flows/clarify-requirements";
 import { useToast } from "@/hooks/use-toast";
 import { Toaster } from "@/components/ui/toaster";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Textarea } from "@/components/ui/textarea";
 
 const ROBOT_ACTIONS = [
   "Move Forward",
@@ -29,7 +30,7 @@ export default function Home() {
   const { toast } = useToast();
   const [isListening, setIsListening] = useState(false);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
-  const synthRef = useRef(window.speechSynthesis);
+  const synthRef = useRef<SpeechSynthesis | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [hasCameraPermission, setHasCameraPermission] = useState(false);
 
@@ -59,7 +60,6 @@ export default function Home() {
 
   useEffect(() => {
     let SpeechRecognition: any = null;
-    //let SpeechSynthesisUtterance: any = null;
     let speechSynthesis: any = null;
 
     const loadSpeechAPI = async () => {
@@ -107,9 +107,6 @@ export default function Home() {
           });
         }
 
-        // SpeechSynthesisUtterance = (await import(
-        //   /* webpackChunkName: "speechSynthesis" */ 'speech-synthesis'
-        // )).default;
         speechSynthesis = window.speechSynthesis;
 
         synthRef.current = speechSynthesis;
@@ -239,7 +236,7 @@ export default function Home() {
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             <div className="flex items-center">
-              <textarea
+              <Textarea
                 className="border rounded p-2 w-full"
                 value={voiceCommand}
                 onChange={(e) => setVoiceCommand(e.target.value)}
