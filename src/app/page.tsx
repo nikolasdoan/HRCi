@@ -62,65 +62,15 @@ type SpeechRecognitionRef = {
   onresult: (event: any) => void;
 } | null;
 
-// Define robot action categories and their functions
-const ROBOT_ACTIONS = {
-  locomotion: [
-    { name: "Go Forward", value: "go_forward", requiresVision: false },
-    { name: "Go Backward", value: "go_backward", requiresVision: false },
-    { name: "Turn Left", value: "turn_left", requiresVision: false },
-    { name: "Turn Right", value: "turn_right", requiresVision: false },
-    { name: "Return to Origin", value: "return_to_origin", requiresVision: false }
-  ],
-  handActions: [
-    { name: "Grasp Object", value: "grasp_object", requiresVision: true },
-    { name: "Release Object", value: "release_object", requiresVision: false },
-    { name: "Open Gripper", value: "open_gripper", requiresVision: false },
-    { name: "Close Gripper", value: "close_gripper", requiresVision: false },
-    { name: "Put Down Object", value: "put_down_object", requiresVision: true },
-    { name: "Categorize Objects", value: "categorize_objects", requiresVision: true },
-    { name: "Wave Hand", value: "wave_hand", requiresVision: false },
-    { name: "Shake Hand", value: "shake_hand", requiresVision: true },
-    { name: "Point To", value: "point_to", requiresVision: true }
-  ],
-  bodyActions: [
-    { name: "Lean Forward", value: "lean_forward", requiresVision: false },
-    { name: "Lean Backward", value: "lean_backward", requiresVision: false },
-    { name: "Lock Pose", value: "lock_pose", requiresVision: false },
-    { name: "Unlock Pose", value: "unlock_pose", requiresVision: false },
-    { name: "Follow Person", value: "follow_person", requiresVision: true },
-    { name: "Emergency Stop", value: "emergency_stop", requiresVision: false }
-  ]
-};
-
-// Define the voice command categories for the info modal
-const VOICE_COMMAND_HELP = {
-  basic: [
-    { command: "move forward", description: "Move the robot forward" },
-    { command: "go backward", description: "Move the robot backward" },
-    { command: "turn left", description: "Turn the robot left" },
-    { command: "turn right", description: "Turn the robot right" },
-    { command: "stop", description: "Stop current action" },
-    { command: "emergency stop", description: "Immediately stop all actions" }
-  ],
-  vision: [
-    { command: "enable vision", description: "Turn on computer vision" },
-    { command: "disable vision", description: "Turn off computer vision" }
-  ],
-  hand: [
-    { command: "grasp object", description: "Pick up an object (requires vision)" },
-    { command: "release object", description: "Release held object" },
-    { command: "open gripper", description: "Open the robot's gripper" },
-    { command: "close gripper", description: "Close the robot's gripper" },
-    { command: "wave hand", description: "Make the robot wave" }
-  ],
-  body: [
-    { command: "lean forward", description: "Lean the robot forward" },
-    { command: "lean backward", description: "Lean the robot backward" },
-    { command: "lock pose", description: "Lock current robot pose" },
-    { command: "unlock pose", description: "Unlock robot pose" },
-    { command: "follow me", description: "Make robot follow person (requires vision)" }
-  ]
-};
+const ROBOT_ACTIONS = [
+  "Move Forward",
+  "Move Backward",
+  "Turn Left",
+  "Turn Right",
+  "Stop",
+  "Activate Shield",
+  "Deactivate Shield",
+];
 
 export default function Home() {
   const [voiceCommand, setVoiceCommand] = useState("");
@@ -149,34 +99,19 @@ export default function Home() {
 
   const [isVisionEnabled, setIsVisionEnabled] = useState(false);
 
-  const [showCommandInfo, setShowCommandInfo] = useState(false);
-
   // Function to handle robot action execution with timeout
   const executeRobotAction = (action: string, shouldAnnounce: boolean = true) => {
-    // Special handling for emergency stop action
-    if (action.toLowerCase() === 'emergency_stop') {
-      // Clear any existing timeout
+    // Special handling for stop action
+    if (action.toLowerCase() === 'stop') {
       if (actionTimeoutRef.current) {
         clearTimeout(actionTimeoutRef.current);
       }
-      // Stop all actions
       setIsActionInProgress(false);
       setRobotAction("");
-      setIsVisionEnabled(false);
-      setObjectDetections([]);
-      
-      // Announce emergency stop
-      if (synthRef.current) {
-        const utterance = new SpeechSynthesisUtterance("Stopped all actions.");
-        utterance.volume = 0.8;
-        utterance.rate = 1.0;
-        synthRef.current.speak(utterance);
-      }
-
       toast({
-        title: "Emergency Stop",
-        description: "Stopped all actions",
-        variant: "destructive",
+        title: "Action Stopped",
+        description: "Current action has been terminated",
+        variant: "default",
       });
       return;
     }
@@ -185,7 +120,7 @@ export default function Home() {
     if (isActionInProgress) {
       toast({
         title: "Action in Progress",
-        description: "Please wait for the current action to complete or use Emergency Stop",
+        description: "Please wait for the current action to complete or press Stop",
         variant: "destructive",
       });
       return;
@@ -220,23 +155,9 @@ export default function Home() {
     }, 60000); // 1 minute timeout
   };
 
-  const handleActionClick = (actionValue: string) => {
-    const allActions = [...ROBOT_ACTIONS.locomotion, ...ROBOT_ACTIONS.handActions, ...ROBOT_ACTIONS.bodyActions];
-    const action = allActions.find(a => a.value === actionValue);
-    
-    if (!action) return;
-
-    // Check if vision is required but not enabled
-    if (action.requiresVision && !isVisionEnabled) {
-      toast({
-        title: "Vision Required",
-        description: "This action requires computer vision. Please enable vision first.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    executeRobotAction(action.value);
+  // Update handleActionClick to use new execution function
+  const handleActionClick = (action: string) => {
+    executeRobotAction(action);
   };
 
   // Function to update vision-to-action configuration
@@ -327,16 +248,15 @@ export default function Home() {
             window.msSpeechRecognition;
 
           if (SpeechRecognitionImpl) {
-            speechRecognition = new SpeechRecognitionImpl();
-            recognitionRef.current = speechRecognition;
+            recognitionRef.current = new SpeechRecognitionImpl();
             
-            if (speechRecognition) {
-              speechRecognition.continuous = false;
-              speechRecognition.lang = "en-US";
-              speechRecognition.interimResults = false;
-              speechRecognition.maxAlternatives = 1;
+            if (recognitionRef.current) {
+              recognitionRef.current.continuous = false;
+              recognitionRef.current.lang = "en-US";
+              recognitionRef.current.interimResults = false;
+              recognitionRef.current.maxAlternatives = 1;
 
-              speechRecognition.onstart = () => {
+              recognitionRef.current.onstart = () => {
                 setIsListening(true);
                 // Mimic audio feedback using speech synthesis
                 if (synthRef.current) {
@@ -347,7 +267,7 @@ export default function Home() {
                 }
               };
 
-              speechRecognition.onresult = (event: any) => {
+              recognitionRef.current.onresult = (event: any) => {
                 try {
                   if (event.results && event.results.length > 0) {
                     const transcript = Array.from(event.results)
@@ -360,39 +280,39 @@ export default function Home() {
                 }
               };
 
-              speechRecognition.onend = () => {
+              recognitionRef.current.onend = () => {
                 setIsListening(false);
               };
 
-              speechRecognition.onerror = (event: any) => {
+              recognitionRef.current.onerror = (event: any) => {
                 console.error("Speech recognition error:", event.error);
-                
-                // Don't show error for aborted recognition (happens on normal stop)
-                if (event.error !== 'aborted') {
-                  // Better error message based on error type
-                  let errorMessage = "There was an error in processing your command.";
-                  if (event.error === "not-allowed") {
-                    errorMessage = "Microphone access was denied. Please allow microphone permissions.";
-                  } else if (event.error === "network") {
-                    errorMessage = "Network error occurred. Please check your connection.";
-                  } else if (event.error === "no-speech") {
-                    errorMessage = "No speech was detected. Please try speaking again.";
-                  }
-                  
-                  toast({
-                    variant: "destructive",
-                    title: "Speech Recognition Error",
-                    description: errorMessage,
-                  });
-                }
-                
                 setIsListening(false);
-                // Ensure recognition is properly stopped
-                try {
-                  speechRecognition.stop();
-                } catch (e) {
-                  console.log("Could not stop recognition that errored:", e);
+                // Stop speech recognition service
+                if (recognitionRef.current) {
+                  try {
+                    recognitionRef.current.stop();
+                  } catch (e) {
+                    console.log("Could not stop recognition that errored:", e);
+                  }
                 }
+                
+                // Better error message based on error type
+                let errorMessage = "There was an error in processing your command.";
+                if (event.error === "not-allowed") {
+                  errorMessage = "Microphone access was denied. Please allow microphone permissions.";
+                } else if (event.error === "network") {
+                  errorMessage = "Network error occurred. Please check your connection.";
+                } else if (event.error === "aborted") {
+                  errorMessage = "Speech recognition was aborted. Please try again.";
+                } else if (event.error === "no-speech") {
+                  errorMessage = "No speech was detected. Please try speaking again.";
+                }
+                
+                toast({
+                  variant: "destructive",
+                  title: "Speech Recognition Error",
+                  description: errorMessage,
+                });
               };
             }
           } else {
@@ -417,17 +337,6 @@ export default function Home() {
     };
 
     loadSpeechAPI();
-
-    // Cleanup function
-    return () => {
-      if (speechRecognition) {
-        try {
-          speechRecognition.stop();
-        } catch (e) {
-          console.log("Error stopping recognition during cleanup:", e);
-        }
-      }
-    };
   }, [toast]);
 
   const startListening = () => {
@@ -436,28 +345,16 @@ export default function Home() {
         // Reset previous voice command
         setVoiceCommand("");
         
-        // Ensure any existing recognition is stopped first
-        try {
-          recognitionRef.current.stop();
-        } catch (e) {
-          // Ignore errors here as the recognition might not be active
-        }
-        
-        // Add a small delay before starting new recognition
+        // Add a small delay to ensure previous sessions are cleaned up
         setTimeout(() => {
-          try {
-            recognitionRef.current?.start();
-            
-            // Safety timeout (browser might not fire onend)
-            setTimeout(() => {
-              if (isListening) {
-                stopListening();
-              }
-            }, 10000); // 10 seconds timeout
-          } catch (e) {
-            console.error("Error starting delayed recognition:", e);
-            setIsListening(false);
-          }
+          recognitionRef.current?.start();
+          
+          // Safety timeout (browser might not fire onend)
+          setTimeout(() => {
+            if (isListening) {
+              stopListening();
+            }
+          }, 10000); // 10 seconds timeout
         }, 100);
       } catch (error) {
         console.error("Error starting speech recognition:", error);
@@ -478,7 +375,7 @@ export default function Home() {
   };
 
   const stopListening = () => {
-    if (recognitionRef.current) {
+    if (recognitionRef.current && isListening) {
       try {
         recognitionRef.current.stop();
       } catch (error) {
@@ -628,167 +525,89 @@ export default function Home() {
 
   return (
     <div className="container mx-auto p-4">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column - Robot Control Panel */}
-        <div className="space-y-6">
-          <Card className="mb-4">
-            <CardHeader>
-              <CardTitle>Robot Control Panel</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-6">
-                {/* Locomotion Section */}
-                <div>
-                  <h3 className="text-lg font-semibold mb-2">Locomotion</h3>
-                  <div className="grid grid-cols-2 gap-2">
-                    {ROBOT_ACTIONS.locomotion
-                      .filter(action => action.value !== "emergency_stop")
-                      .map((action) => (
-                        <Button
-                          key={action.value}
-                          onClick={() => handleActionClick(action.value)}
-                          disabled={isActionInProgress}
-                          className="w-full"
-                        >
-                          {action.name}
-                        </Button>
-                      ))}
-                  </div>
-                </div>
-
-                {/* Hand Actions Section */}
-                <div>
-                  <h3 className="text-lg font-semibold mb-2">Hand Actions</h3>
-                  <div className="grid grid-cols-2 gap-2">
-                    {ROBOT_ACTIONS.handActions.map((action) => (
-                      <Button
-                        key={action.value}
-                        onClick={() => handleActionClick(action.value)}
-                        disabled={isActionInProgress || (action.requiresVision && !isVisionEnabled)}
-                        className={`w-full ${action.requiresVision ? 'bg-blue-500 hover:bg-blue-600' : ''}`}
-                      >
-                        {action.name}
-                        {action.requiresVision && <EyeIcon className="w-4 h-4 ml-2" />}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Body Actions Section */}
-                <div>
-                  <h3 className="text-lg font-semibold mb-2">Body Actions</h3>
-                  <div className="grid grid-cols-2 gap-2">
-                    {ROBOT_ACTIONS.bodyActions
-                      .filter(action => action.value !== "emergency_stop")
-                      .map((action) => (
-                        <Button
-                          key={action.value}
-                          onClick={() => handleActionClick(action.value)}
-                          disabled={isActionInProgress || (action.requiresVision && !isVisionEnabled)}
-                          className={`w-full ${action.requiresVision ? 'bg-blue-500 hover:bg-blue-600' : ''}`}
-                        >
-                          {action.name}
-                          {action.requiresVision && <EyeIcon className="w-4 h-4 ml-2" />}
-                        </Button>
-                      ))}
-                  </div>
-                </div>
-
-                {isActionInProgress && (
-                  <div className="space-y-2">
-                    <div className="text-sm font-medium">Action in Progress</div>
-                    <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-                      <div className="h-full bg-blue-500 animate-progress"></div>
-                    </div>
-                    <p className="text-sm text-gray-500">
-                      Current action will complete in 1 minute
-                    </p>
-                  </div>
-                )}
-
-                <Button
-                  onClick={() => handleActionClick("emergency_stop")}
-                  variant="destructive"
-                  size="lg"
-                  className="w-full py-6 text-lg font-bold"
-                >
-                  EMERGENCY STOP
-                </Button>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <Card className="mb-4">
+          <CardHeader>
+            <CardTitle>Robot Control Panel</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-2">
+                {ROBOT_ACTIONS.filter(action => action !== "Stop").map((action) => (
+                  <Button
+                    key={action}
+                    onClick={() => handleActionClick(action.toLowerCase())}
+                    disabled={isActionInProgress}
+                    className="w-full"
+                  >
+                    {action}
+                  </Button>
+                ))}
               </div>
-            </CardContent>
-          </Card>
-        </div>
 
-        {/* Middle Column - Voice Control and Computer Vision */}
-        <div className="space-y-6">
-          <Card className="mb-4">
-            <CardHeader>
-              <div className="flex justify-between items-center">
-                <CardTitle>Voice Control</CardTitle>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => setShowCommandInfo(!showCommandInfo)}
-                  className={`h-8 w-8 transition-transform duration-200 ${showCommandInfo ? 'rotate-180' : ''}`}
-                >
-                  <InformationCircleIcon className="h-5 w-5" />
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <Alert className="bg-blue-50 border-blue-200">
-                  <AlertTitle className="flex items-center justify-between">
-                    Quick Voice Commands
-                  </AlertTitle>
-                  <AlertDescription className="text-sm space-y-2">
-                    <div className="grid grid-cols-2 gap-2 mt-2">
-                      <div>
-                        <p className="font-medium mb-1">Movement:</p>
-                        <ul className="list-disc pl-4 space-y-1">
-                          <li>"move forward"</li>
-                          <li>"turn left/right"</li>
-                          <li>"stop"</li>
-                        </ul>
-                      </div>
-                      <div>
-                        <p className="font-medium mb-1">Vision:</p>
-                        <ul className="list-disc pl-4 space-y-1">
-                          <li>"enable vision"</li>
-                          <li>"disable vision"</li>
-                        </ul>
-                      </div>
-                    </div>
-                    <p className="text-xs text-gray-500 mt-2">
-                      Press (i) for full command list →
-                    </p>
+              {isActionInProgress && (
+                <div className="space-y-2">
+                  <div className="text-sm font-medium">Action in Progress</div>
+                  <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                    <div className="h-full bg-blue-500 animate-progress"></div>
+                  </div>
+                  <p className="text-sm text-gray-500">
+                    Current action will complete in 1 minute
+                  </p>
+                </div>
+              )}
+
+              <Button
+                onClick={() => handleActionClick("stop")}
+                variant="destructive"
+                size="lg"
+                className="w-full py-6 text-lg font-bold"
+              >
+                STOP
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="mb-4">
+          <CardHeader>
+            <CardTitle>Voice Control</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <Alert className="bg-blue-50 border-blue-200">
+                <AlertTitle>Available Voice Commands</AlertTitle>
+                <AlertDescription className="text-sm space-y-1">
+                  <p>• All robot actions (e.g., "move forward", "turn left")</p>
+                  <p>• Vision controls:</p>
+                  <ul className="pl-4 list-disc">
+                    <li>"open computer vision" / "enable vision"</li>
+                    <li>"close computer vision" / "disable vision"</li>
+                  </ul>
+                </AlertDescription>
+              </Alert>
+
+              {/* Voice Control Section */}
+              {isListening && (
+                <Alert className="bg-primary/10 text-primary border-primary/50 animate-pulse mb-4">
+                  <AlertTitle className="text-lg">Listening...</AlertTitle>
+                  <AlertDescription>
+                    Speak your command clearly
                   </AlertDescription>
                 </Alert>
-
-                {isListening && (
-                  <Alert className="bg-primary/10 text-primary border-primary/50 animate-pulse">
-                    <AlertTitle>Listening...</AlertTitle>
-                    <AlertDescription>
-                      I'm listening to your voice command. Speak clearly.
-                    </AlertDescription>
-                  </Alert>
-                )}
-                
-                {voiceCommand && (
-                  <div className="p-4 border border-green-300 rounded-md bg-green-50">
-                    <p className="font-medium text-sm text-green-800">Recognized Command:</p>
-                    <p className="text-lg">{voiceCommand}</p>
-                  </div>
-                )}
-                
-                <Textarea
-                  placeholder="Enter text command here..."
-                  value={voiceCommand}
-                  onChange={(e) => setVoiceCommand(e.target.value)}
-                  className="h-24 resize-none"
-                />
-                
-                <div className="flex justify-center items-center gap-4">
+              )}
+              
+              {voiceCommand && (
+                <div className="p-4 mb-4 border border-green-300 rounded-md bg-green-50">
+                  <p className="font-medium text-sm text-green-800">Recognized Command:</p>
+                  <p className="text-lg font-medium">{voiceCommand}</p>
+                </div>
+              )}
+              
+              <div className="flex flex-col items-center gap-6 my-4">
+                {/* Control Buttons */}
+                <div className="flex items-center gap-6">
+                  {/* Microphone Button */}
                   <Button
                     onClick={() => {
                       if (isListening) {
@@ -797,144 +616,102 @@ export default function Home() {
                         startListening();
                       }
                     }}
-                    className={`w-16 h-16 rounded-full transition-all duration-300 ${
+                    className={`w-20 h-20 rounded-full transition-all duration-300 shadow-lg ${
                       isListening 
-                        ? 'bg-red-600 hover:bg-red-700 animate-pulse' 
+                        ? 'bg-red-600 hover:bg-red-700 animate-pulse shadow-red-300' 
                         : 'bg-red-100 hover:bg-red-200'
                     }`}
                   >
-                    <MicrophoneIcon className={`w-8 h-8 transition-colors duration-300 ${
+                    <MicrophoneIcon className={`w-10 h-10 transition-colors duration-300 ${
                       isListening ? 'text-white' : 'text-red-600'
                     }`} />
                   </Button>
 
+                  {/* Play Button */}
                   <Button
                     onClick={handleVoiceCommand}
                     disabled={!voiceCommand}
-                    className={`w-12 h-12 rounded-full transition-all duration-300 ${
+                    className={`w-16 h-16 rounded-full transition-all duration-300 shadow-lg ${
                       voiceCommand 
-                        ? 'bg-green-600 hover:bg-green-700' 
+                        ? 'bg-green-600 hover:bg-green-700 shadow-green-300' 
                         : 'bg-green-100'
-                    }`}
+                    } ${!voiceCommand && 'opacity-50'}`}
                   >
-                    <PlayIcon className={`w-6 h-6 transition-colors duration-300 ${
+                    <PlayIcon className={`w-8 h-8 transition-colors duration-300 ${
                       voiceCommand ? 'text-white' : 'text-green-600'
                     }`} />
                   </Button>
                 </div>
 
-                {clarifiedCommand && (
-                  <div className="p-4 border border-blue-300 rounded-md bg-blue-50">
-                    <p className="font-medium text-sm text-blue-800">Clarified Command:</p>
-                    <p>{clarifiedCommand}</p>
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="mb-4">
-            <CardHeader>
-              <div className="flex justify-between items-center">
-                <CardTitle>Computer Vision</CardTitle>
-                <Button
-                  onClick={() => setIsVisionEnabled(!isVisionEnabled)}
-                  variant={isVisionEnabled ? "destructive" : "default"}
-                  className="ml-4"
-                >
-                  {isVisionEnabled ? "Disable Vision" : "Enable Vision"}
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {!isVisionEnabled && (
-                  <Alert>
-                    <AlertTitle>Computer Vision Disabled</AlertTitle>
-                    <AlertDescription>
-                      Enable computer vision to use vision-dependent actions (marked with <EyeIcon className="w-4 h-4 inline" />)
-                    </AlertDescription>
-                  </Alert>
-                )}
-                
-                {isVisionEnabled && objectDetections.length > 0 && (
-                  <Alert>
-                    <AlertTitle>Objects Detected</AlertTitle>
-                    <AlertDescription>
-                      {objectDetections.map((obj, index) => (
-                        <div key={index}>
-                          {obj.class} (Confidence: {Math.round(obj.score * 100)}%)
-                        </div>
-                      ))}
-                    </AlertDescription>
-                  </Alert>
-                )}
-
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  className="w-full aspect-video bg-gray-100 rounded-lg"
-                />
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Right Column - Available Voice Commands */}
-        <div className={`space-y-6 transition-all duration-300 ${showCommandInfo ? 'opacity-100' : 'opacity-0'}`}>
-          <Card className="sticky top-4">
-            <CardHeader>
-              <CardTitle>Available Voice Commands</CardTitle>
-            </CardHeader>
-            <CardContent className="max-h-[calc(100vh-8rem)] overflow-y-auto">
-              <div className="space-y-6">
-                {Object.entries(VOICE_COMMAND_HELP).map(([category, commands]) => (
-                  <div key={category} className="border-b pb-4 last:border-0">
-                    <h3 className="text-md font-semibold capitalize mb-3 text-gray-700">{category} Commands</h3>
-                    <div className="space-y-2">
-                      {commands.map((cmd, index) => (
-                        <div key={index} className="flex flex-col gap-1">
-                          <span className="inline-block bg-blue-100 text-blue-800 rounded px-2 py-1 text-sm font-medium w-fit">
-                            "{cmd.command}"
-                          </span>
-                          <span className="text-gray-600 text-sm pl-2">
-                            {cmd.description}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-
-                <div className="bg-blue-50 rounded-lg p-4">
-                  <h3 className="text-md font-semibold text-blue-800 mb-3">Tips</h3>
-                  <ul className="space-y-2 text-sm text-blue-700">
-                    <li className="flex items-center gap-2">
-                      <span className="w-1.5 h-1.5 bg-blue-700 rounded-full"></span>
-                      Speak clearly and naturally
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <span className="w-1.5 h-1.5 bg-blue-700 rounded-full"></span>
-                      Commands with 👁️ require computer vision
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <span className="w-1.5 h-1.5 bg-blue-700 rounded-full"></span>
-                      Use "emergency stop" to immediately stop all actions
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <span className="w-1.5 h-1.5 bg-blue-700 rounded-full"></span>
-                      You can combine commands like "enable vision and move forward"
-                    </li>
-                  </ul>
+                {/* Text Input - Optional for manual command entry */}
+                <div className="w-full max-w-sm">
+                  <Textarea
+                    placeholder="Or type your command here..."
+                    value={voiceCommand}
+                    onChange={(e) => setVoiceCommand(e.target.value)}
+                    className="h-20 resize-none text-lg"
+                  />
                 </div>
               </div>
-            </CardContent>
-          </Card>
-        </div>
+
+              {clarifiedCommand && (
+                <div className="p-4 border border-blue-300 rounded-md bg-blue-50">
+                  <p className="font-medium text-sm text-blue-800">Clarified Command:</p>
+                  <p className="text-lg">{clarifiedCommand}</p>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
+      <Card className="mb-4">
+        <CardHeader>
+          <div className="flex justify-between items-center">
+            <CardTitle>Computer Vision</CardTitle>
+            <Button
+              onClick={() => setIsVisionEnabled(!isVisionEnabled)}
+              variant={isVisionEnabled ? "destructive" : "default"}
+              className="ml-4"
+            >
+              {isVisionEnabled ? "Disable Vision" : "Enable Vision"}
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            {!isVisionEnabled && (
+              <Alert className="mb-4">
+                <AlertTitle>Computer Vision Disabled</AlertTitle>
+                <AlertDescription>
+                  Enable computer vision to start object detection
+                </AlertDescription>
+              </Alert>
+            )}
+            
+            {isVisionEnabled && objectDetections.length > 0 && (
+              <Alert className="mb-4">
+                <AlertTitle>Objects Detected</AlertTitle>
+                <AlertDescription>
+                  {objectDetections.map((obj, index) => (
+                    <div key={index}>
+                      {obj.class} (Confidence: {Math.round(obj.score * 100)}%)
+                    </div>
+                  ))}
+                </AlertDescription>
+              </Alert>
+            )}
+
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              className="w-full aspect-video bg-gray-100 rounded-lg"
+            />
+          </div>
+        </CardContent>
+      </Card>
       <Toaster />
     </div>
   );
