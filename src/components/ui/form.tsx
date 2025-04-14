@@ -119,6 +119,12 @@ const FormControl = React.forwardRef<
           : `${formDescriptionId} ${formMessageId}`
       }
       aria-invalid={!!error}
+      className={cn(
+        "transition-colors duration-200",
+        "focus:ring-2 focus:ring-ring focus:ring-offset-2",
+        "disabled:opacity-50 disabled:cursor-not-allowed",
+        error && "border-destructive focus:ring-destructive"
+      )}
       {...props}
     />
   )
@@ -135,7 +141,11 @@ const FormDescription = React.forwardRef<
     <p
       ref={ref}
       id={formDescriptionId}
-      className={cn("text-sm text-muted-foreground", className)}
+      className={cn(
+        "text-sm text-muted-foreground",
+        "transition-colors duration-200",
+        className
+      )}
       {...props}
     />
   )

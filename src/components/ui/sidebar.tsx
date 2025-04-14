@@ -536,60 +536,40 @@ const sidebarMenuButtonVariants = cva(
 const SidebarMenuButton = React.forwardRef<
   HTMLButtonElement,
   React.ComponentProps<"button"> & {
-    asChild?: boolean
-    isActive?: boolean
-    tooltip?: string | React.ComponentProps<typeof TooltipContent>
-  } & VariantProps<typeof sidebarMenuButtonVariants>
->(
-  (
-    {
-      asChild = false,
-      isActive = false,
-      variant = "default",
-      size = "default",
-      tooltip,
-      className,
-      ...props
-    },
-    ref
-  ) => {
-    const Comp = asChild ? Slot : "button"
-    const { isMobile, state } = useSidebar()
-
-    const button = (
-      <Comp
-        ref={ref}
-        data-sidebar="menu-button"
-        data-size={size}
-        data-active={isActive}
-        className={cn(sidebarMenuButtonVariants({ variant, size }), className)}
-        {...props}
-      />
-    )
-
-    if (!tooltip) {
-      return button
-    }
-
-    if (typeof tooltip === "string") {
-      tooltip = {
-        children: tooltip,
-      }
-    }
-
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>{button}</TooltipTrigger>
-        <TooltipContent
-          side="right"
-          align="center"
-          hidden={state !== "collapsed" || isMobile}
-          {...tooltip}
-        />
-      </Tooltip>
-    )
+    active?: boolean
+    size?: "sm" | "default" | "lg"
+    icon?: React.ComponentType<{ className?: string }>
+    badge?: React.ReactNode
   }
-)
+>(({ className, active, size = "default", icon: Icon, badge, children, ...props }, ref) => (
+  <button
+    ref={ref}
+    data-sidebar="menu-button"
+    data-active={active}
+    data-size={size}
+    className={cn(
+      "group/menu-button relative flex w-full items-center gap-2 rounded-md px-2 text-sm font-medium text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
+      "data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground",
+      "data-[size=sm]:h-8 data-[size=default]:h-10 data-[size=lg]:h-12",
+      className
+    )}
+    {...props}
+  >
+    {Icon && (
+      <Icon
+        className={cn(
+          "size-4 shrink-0 transition-transform duration-200",
+          "group-hover/menu-button:scale-110",
+          "group-data-[active=true]/menu-button:scale-110"
+        )}
+      />
+    )}
+    <span className="flex-1 truncate">{children}</span>
+    {badge && (
+      <SidebarMenuBadge>{badge}</SidebarMenuBadge>
+    )}
+  </button>
+))
 SidebarMenuButton.displayName = "SidebarMenuButton"
 
 const SidebarMenuAction = React.forwardRef<

@@ -9,10 +9,57 @@ import { useToast } from "@/hooks/use-toast";
 import { Toaster } from "@/components/ui/toaster";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Textarea } from "@/components/ui/textarea";
+import React from 'react';
 
 // Import TensorFlow.js dependencies
 import * as tf from '@tensorflow/tfjs';
 import * as cocoSsd from '@tensorflow-models/coco-ssd';
+
+// Add keyframes for progress animation
+const styles = `
+  @keyframes progress {
+    0% {
+      width: 0%;
+    }
+    100% {
+      width: 100%;
+    }
+  }
+
+  .animate-progress {
+    animation: progress 60s linear forwards;
+  }
+`;
+
+// Add style tag to head
+if (typeof document !== 'undefined') {
+  const styleSheet = document.createElement("style");
+  styleSheet.innerText = styles;
+  document.head.appendChild(styleSheet);
+}
+
+// Define speech recognition types
+declare global {
+  interface Window {
+    SpeechRecognition: any;
+    webkitSpeechRecognition: any;
+    mozSpeechRecognition: any;
+    msSpeechRecognition: any;
+  }
+}
+
+type SpeechRecognitionRef = {
+  continuous: boolean;
+  lang: string;
+  interimResults: boolean;
+  maxAlternatives: number;
+  start: () => void;
+  stop: () => void;
+  onstart: (event: any) => void;
+  onend: (event: any) => void;
+  onerror: (event: any) => void;
+  onresult: (event: any) => void;
+} | null;
 
 const ROBOT_ACTIONS = [
   "Move Forward",
@@ -30,12 +77,117 @@ export default function Home() {
   const [robotAction, setRobotAction] = useState("");
   const { toast } = useToast();
   const [isListening, setIsListening] = useState(false);
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const recognitionRef = useRef<SpeechRecognitionRef>(null);
   const synthRef = useRef<SpeechSynthesis | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [hasCameraPermission, setHasCameraPermission] = useState(false);
   const [objectDetections, setObjectDetections] = useState<any[]>([]);
   const [model, setModel] = useState<cocoSsd.ObjectDetection | null>(null);
+  
+  // Add state for action timing
+  const [isActionInProgress, setIsActionInProgress] = useState(false);
+  const [lastAnnouncementTime, setLastAnnouncementTime] = useState(0);
+  const actionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Vision-to-action configuration
+  const [visionToActionConfig, setVisionToActionConfig] = useState({
+    personDetected: "Move Forward",
+    cellPhoneDetected: "Start robot interaction sequence",
+    enabled: true
+  });
+
+  const [isVisionEnabled, setIsVisionEnabled] = useState(false);
+
+  // Function to handle robot action execution with timeout
+  const executeRobotAction = (action: string, shouldAnnounce: boolean = true) => {
+    // Special handling for stop action
+    if (action.toLowerCase() === 'stop') {
+      if (actionTimeoutRef.current) {
+        clearTimeout(actionTimeoutRef.current);
+      }
+      setIsActionInProgress(false);
+      setRobotAction("");
+      toast({
+        title: "Action Stopped",
+        description: "Current action has been terminated",
+        variant: "default",
+      });
+      return;
+    }
+
+    // Don't start new action if one is in progress
+    if (isActionInProgress) {
+      toast({
+        title: "Action in Progress",
+        description: "Please wait for the current action to complete or press Stop",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setRobotAction(action);
+    setIsActionInProgress(true);
+
+    // Only announce once when the action starts
+    if (shouldAnnounce && synthRef.current) {
+      const utterance = new SpeechSynthesisUtterance(`Starting ${action}`);
+      utterance.volume = 0.8;
+      utterance.rate = 1.0;
+      synthRef.current.speak(utterance);
+    }
+
+    // Clear any existing timeout
+    if (actionTimeoutRef.current) {
+      clearTimeout(actionTimeoutRef.current);
+    }
+
+    // Set timeout for action completion (1 minute)
+    actionTimeoutRef.current = setTimeout(() => {
+      setIsActionInProgress(false);
+      setRobotAction("");
+      
+      toast({
+        title: "Action Complete",
+        description: `Completed action: ${action}`,
+        variant: "default",
+      });
+    }, 60000); // 1 minute timeout
+  };
+
+  // Update handleActionClick to use new execution function
+  const handleActionClick = (action: string) => {
+    executeRobotAction(action);
+  };
+
+  // Function to update vision-to-action configuration
+  const updateVisionConfig = (objectType: string, action: string) => {
+    setVisionToActionConfig(prev => ({
+      ...prev,
+      [objectType]: action
+    }));
+    
+    toast({
+      title: "Configuration Updated",
+      description: `${objectType} detection will now trigger "${action}"`,
+      variant: "default",
+    });
+  };
+
+  // Toggle vision-to-action system
+  const toggleVisionToAction = () => {
+    setVisionToActionConfig(prev => ({
+      ...prev,
+      enabled: !prev.enabled
+    }));
+    
+    toast({
+      title: visionToActionConfig.enabled ? "Vision-to-Action Disabled" : "Vision-to-Action Enabled",
+      description: visionToActionConfig.enabled ? 
+        "The system will no longer automatically respond to detected objects" : 
+        "The system will now automatically respond to detected objects",
+      variant: "default",
+    });
+  };
 
   useEffect(() => {
     const loadModel = async () => {
@@ -81,59 +233,105 @@ export default function Home() {
 
 
   useEffect(() => {
-    let SpeechRecognition: any = null;
+    let speechRecognition: any = null;
     let speechSynthesis: any = null;
 
     const loadSpeechAPI = async () => {
       if (typeof window !== "undefined") {
-        SpeechRecognition =
-          window.SpeechRecognition || (window as any).webkitSpeechRecognition;
+        try {
+          // Try different browser implementations of SpeechRecognition
+          const SpeechRecognitionImpl = 
+            window.SpeechRecognition || 
+            window.webkitSpeechRecognition || 
+            window.mozSpeechRecognition || 
+            window.msSpeechRecognition;
 
-        if (SpeechRecognition) {
-          recognitionRef.current = new SpeechRecognition();
-          recognitionRef.current.continuous = false;
-          recognitionRef.current.lang = "en-US";
+          if (SpeechRecognitionImpl) {
+            recognitionRef.current = new SpeechRecognitionImpl();
+            
+            if (recognitionRef.current) {
+              recognitionRef.current.continuous = false;
+              recognitionRef.current.lang = "en-US";
+              recognitionRef.current.interimResults = false;
+              recognitionRef.current.maxAlternatives = 1;
 
-          recognitionRef.current.onstart = () => {
-            setIsListening(true);
-            // Mimic audio feedback using speech synthesis
-            if (synthRef.current) {
-              const utterance = new SpeechSynthesisUtterance("Listening...");
-              synthRef.current.speak(utterance);
+              recognitionRef.current.onstart = () => {
+                setIsListening(true);
+                // Mimic audio feedback using speech synthesis
+                if (synthRef.current) {
+                  const utterance = new SpeechSynthesisUtterance("Listening...");
+                  utterance.volume = 0.8;
+                  utterance.rate = 1.0;
+                  synthRef.current.speak(utterance);
+                }
+              };
+
+              recognitionRef.current.onresult = (event: any) => {
+                try {
+                  if (event.results && event.results.length > 0) {
+                    const transcript = Array.from(event.results)
+                      .map((result: any) => result[0].transcript)
+                      .join("");
+                    setVoiceCommand(transcript);
+                  }
+                } catch (error) {
+                  console.error("Error processing speech results:", error);
+                }
+              };
+
+              recognitionRef.current.onend = () => {
+                setIsListening(false);
+              };
+
+              recognitionRef.current.onerror = (event: any) => {
+                console.error("Speech recognition error:", event.error);
+                setIsListening(false);
+                // Stop speech recognition service
+                if (recognitionRef.current) {
+                  try {
+                    recognitionRef.current.stop();
+                  } catch (e) {
+                    console.log("Could not stop recognition that errored:", e);
+                  }
+                }
+                
+                // Better error message based on error type
+                let errorMessage = "There was an error in processing your command.";
+                if (event.error === "not-allowed") {
+                  errorMessage = "Microphone access was denied. Please allow microphone permissions.";
+                } else if (event.error === "network") {
+                  errorMessage = "Network error occurred. Please check your connection.";
+                } else if (event.error === "aborted") {
+                  errorMessage = "Speech recognition was aborted. Please try again.";
+                } else if (event.error === "no-speech") {
+                  errorMessage = "No speech was detected. Please try speaking again.";
+                }
+                
+                toast({
+                  variant: "destructive",
+                  title: "Speech Recognition Error",
+                  description: errorMessage,
+                });
+              };
             }
-          };
-
-          recognitionRef.current.onresult = (event: SpeechRecognitionEvent) => {
-            const transcript = Array.from(event.results)
-              .map((result) => result[0])
-              .map((result) => result.transcript)
-              .join("");
-            setVoiceCommand(transcript);
-          };
-
-          recognitionRef.current.onend = () => {
-            setIsListening(false);
-          };
-
-          recognitionRef.current.onerror = (event: SpeechRecognitionErrorEvent) => {
-            console.error("Speech recognition error:", event.error);
-            setIsListening(false);
+          } else {
             toast({
               variant: "destructive",
-              title: "Speech Recognition Error",
-              description: `There was an error in processing your command. ${event.error}`,
+              title: "Speech Recognition Not Supported",
+              description: "Your browser does not support speech recognition.",
             });
-          };
-        } else {
+          }
+
+          speechSynthesis = window.speechSynthesis;
+          synthRef.current = speechSynthesis;
+        } catch (error: any) {
+          console.error("Error loading speech API:", error);
           toast({
             variant: "destructive",
-            title: "Speech Recognition Not Supported",
-            description: "Your browser does not support speech recognition.",
+            title: "Speech API Load Error",
+            description: "Failed to load speech recognition API: " + (error?.message || "Unknown error"),
           });
         }
-
-        speechSynthesis = window.speechSynthesis;
-        synthRef.current = speechSynthesis;
       }
     };
 
@@ -142,22 +340,48 @@ export default function Home() {
 
   const startListening = () => {
     if (recognitionRef.current) {
-      recognitionRef.current.start();
+      try {
+        // Reset previous voice command
+        setVoiceCommand("");
+        
+        // Add a small delay to ensure previous sessions are cleaned up
+        setTimeout(() => {
+          recognitionRef.current?.start();
+          
+          // Safety timeout (browser might not fire onend)
+          setTimeout(() => {
+            if (isListening) {
+              stopListening();
+            }
+          }, 10000); // 10 seconds timeout
+        }, 100);
+      } catch (error) {
+        console.error("Error starting speech recognition:", error);
+        setIsListening(false);
+        toast({
+          variant: "destructive",
+          title: "Speech Recognition Error",
+          description: "Failed to start speech recognition. Please try again."
+        });
+      }
+    } else {
+      toast({
+        variant: "destructive",
+        title: "Speech Recognition Not Available",
+        description: "Speech recognition is not available in your browser."
+      });
     }
   };
 
   const stopListening = () => {
     if (recognitionRef.current && isListening) {
-      recognitionRef.current.stop();
-    }
-  };
-
-  const handleActionClick = (action: string) => {
-    setRobotAction(action);
-    // Mimic audio feedback using speech synthesis
-    if (synthRef.current) {
-      const utterance = new SpeechSynthesisUtterance(`Executing action: ${action}`);
-      synthRef.current.speak(utterance);
+      try {
+        recognitionRef.current.stop();
+      } catch (error) {
+        console.error("Error stopping speech recognition:", error);
+      } finally {
+        setIsListening(false);
+      }
     }
   };
 
@@ -166,8 +390,34 @@ export default function Home() {
       const clarification = await clarifyRequirements({ command: voiceCommand });
       setClarifiedCommand(clarification.clarifiedCommand);
 
+      // Check for vision control commands
+      const lowerCommand = clarification.clarifiedCommand.toLowerCase();
+      if (lowerCommand.includes("enable vision") || 
+          lowerCommand.includes("turn on vision") || 
+          lowerCommand.includes("open computer vision") ||
+          lowerCommand.includes("start vision")) {
+        setIsVisionEnabled(true);
+        toast({
+          title: "Computer Vision Enabled",
+          description: "Computer vision system is now active",
+          variant: "default",
+        });
+        return;
+      } else if (lowerCommand.includes("disable vision") || 
+                 lowerCommand.includes("turn off vision") ||
+                 lowerCommand.includes("close computer vision") ||
+                 lowerCommand.includes("stop vision")) {
+        setIsVisionEnabled(false);
+        toast({
+          title: "Computer Vision Disabled",
+          description: "Computer vision system is now inactive",
+          variant: "default",
+        });
+        return;
+      }
+
       const aiResult = await processVoiceCommand({ voiceCommand: clarification.clarifiedCommand });
-      setRobotAction(aiResult.action);
+      executeRobotAction(aiResult.action);
 
       // Mimic audio feedback using speech synthesis
       if (synthRef.current) {
@@ -184,13 +434,28 @@ export default function Home() {
     }
   };
 
+  const showConfirmationDialog = (action: string) => {
+    // Voice announcement for confirmation
+    if (synthRef.current) {
+      const utterance = new SpeechSynthesisUtterance(
+        `Person detected. Do you want to execute ${action}?`
+      );
+      utterance.volume = 0.8;
+      utterance.rate = 1.0;
+      synthRef.current.speak(utterance);
+    }
+
+    // Show visual confirmation
+    toast({
+      title: "Person Detected",
+      description: `Person detected. Waiting for confirmation.`,
+      variant: "default",
+      duration: 10000,
+    });
+  };
+
   const detectObjects = async () => {
-    if (!videoRef.current || !model) {
-      toast({
-        variant: 'destructive',
-        title: 'Object Detection Error',
-        description: 'Video stream or object detection model not available.',
-      });
+    if (!videoRef.current || !model || !isVisionEnabled) {
       return;
     }
 
@@ -198,28 +463,19 @@ export default function Home() {
       const predictions = await model.detect(videoRef.current);
       setObjectDetections(predictions);
 
-      if (predictions && predictions.length > 0) {
-        predictions.forEach(prediction => {
+      // Only trigger actions if vision-to-action is enabled and no action is in progress
+      if (predictions && predictions.length > 0 && visionToActionConfig.enabled && !isActionInProgress) {
+        for (const prediction of predictions) {
+          if (isActionInProgress) break; // Stop checking if an action was triggered
+          
           if (prediction.class === 'person') {
-            setRobotAction('Initiate security protocol');
-            /*if (synthRef.current) {
-              const utterance = new SpeechSynthesisUtterance('Initiating security protocol due to person detection.');
-              synthRef.current.speak(utterance);
-            }*/
+            executeRobotAction(visionToActionConfig.personDetected, true);
+            break;
           } else if (prediction.class === 'cell phone') {
-            setRobotAction('Start robot interaction sequence');
-            /*if (synthRef.current) {
-              const utterance = new SpeechSynthesisUtterance('Starting robot interaction sequence due to cell phone detection.');
-              synthRef.current.speak(utterance);
-            } else {
-              setRobotAction('Object Detected');
-              if (synthRef.current) {
-                const utterance = new SpeechSynthesisUtterance('Object Detected.');
-                synthRef.current.speak(utterance);
-              }
-            }*/
+            executeRobotAction(visionToActionConfig.cellPhoneDetected, false);
+            break;
           }
-        });
+        }
       }
     } catch (error: any) {
       console.error("Object detection error:", error);
@@ -235,9 +491,8 @@ export default function Home() {
     let animationFrameId: number;
 
     const renderDetections = async () => {
-      if (hasCameraPermission && model && videoRef.current) {
-        detectObjects(); // Call detectObjects directly here
-
+      if (hasCameraPermission && model && videoRef.current && isVisionEnabled) {
+        detectObjects();
         animationFrameId = requestAnimationFrame(renderDetections);
       }
     };
@@ -247,90 +502,197 @@ export default function Home() {
     return () => {
       cancelAnimationFrame(animationFrameId);
     };
-  }, [hasCameraPermission, model]);
+  }, [hasCameraPermission, model, isVisionEnabled]);
 
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (actionTimeoutRef.current) {
+        clearTimeout(actionTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // Update UI to show action progress
+  const getActionStatusText = () => {
+    if (!robotAction) return null;
+    if (isActionInProgress) {
+      return `Executing: ${robotAction} (1 minute)`;
+    }
+    return robotAction;
+  };
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen p-4">
-      <Toaster />
-      <header className="mb-8">
-        <h1 className="text-4xl font-bold text-primary">RoboCommand</h1>
-        <p className="text-muted-foreground">Control your robot with ease.</p>
-      </header>
-
-      <main className="flex flex-col md:flex-row gap-4 w-full max-w-4xl">
-        {/* Action Dashboard */}
-        <Card className="w-full md:w-1/2">
+    <div className="container mx-auto p-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <Card className="mb-4">
           <CardHeader>
-            <CardTitle>Action Dashboard</CardTitle>
+            <CardTitle>Robot Control Panel</CardTitle>
           </CardHeader>
-          <CardContent className="grid gap-4">
-            {ROBOT_ACTIONS.map((action) => (
-              <Button key={action} onClick={() => handleActionClick(action)}>
-                {action}
-              </Button>
-            ))}
-            {robotAction && <p>Last Action: {robotAction}</p>}
-          </CardContent>
-        </Card>
+          <CardContent>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-2">
+                {ROBOT_ACTIONS.filter(action => action !== "Stop").map((action) => (
+                  <Button
+                    key={action}
+                    onClick={() => handleActionClick(action.toLowerCase())}
+                    disabled={isActionInProgress}
+                    className="w-full"
+                  >
+                    {action}
+                  </Button>
+                ))}
+              </div>
 
-        {/* Voice Command Input */}
-        <Card className="w-full md:w-1/2">
-          <CardHeader>
-            <CardTitle>Voice Command Input</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4">
-            <div className="flex items-center">
-              <Textarea
-                className="border rounded p-2 w-full"
-                value={voiceCommand}
-                onChange={(e) => setVoiceCommand(e.target.value)}
-                placeholder="Enter voice command or speak..."
-                rows={3}
-              />
+              {isActionInProgress && (
+                <div className="space-y-2">
+                  <div className="text-sm font-medium">Action in Progress</div>
+                  <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                    <div className="h-full bg-blue-500 animate-progress"></div>
+                  </div>
+                  <p className="text-sm text-gray-500">
+                    Current action will complete in 1 minute
+                  </p>
+                </div>
+              )}
+
               <Button
-                onClick={isListening ? stopListening : startListening}
-                disabled={!recognitionRef.current}
+                onClick={() => handleActionClick("stop")}
+                variant="destructive"
+                size="lg"
+                className="w-full py-6 text-lg font-bold"
               >
-                {isListening ? "Stop Listening" : "Start Listening"}
+                STOP
               </Button>
             </div>
-            <Button onClick={handleVoiceCommand} disabled={!voiceCommand}>
-              Process Voice Command
-            </Button>
-            {clarifiedCommand && <p>Clarified Command: {clarifiedCommand}</p>}
           </CardContent>
         </Card>
-      </main>
 
-      {/* Object Detection */}
-      <section className="mt-8 w-full max-w-4xl">
-        <h2 className="text-2xl font-semibold text-primary mb-4">Object Detection</h2>
-        <div className="relative">
-          <video ref={videoRef} className="w-full aspect-video rounded-md" autoPlay muted />
-            { !(hasCameraPermission) && (
-                <Alert variant="destructive">
-                  <AlertTitle>Camera Access Required</AlertTitle>
+        <Card className="mb-4">
+          <CardHeader>
+            <CardTitle>Voice Control</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <Alert className="bg-blue-50 border-blue-200">
+                <AlertTitle>Available Voice Commands</AlertTitle>
+                <AlertDescription className="text-sm space-y-1">
+                  <p>• All robot actions (e.g., "move forward", "turn left")</p>
+                  <p>• Vision controls:</p>
+                  <ul className="pl-4 list-disc">
+                    <li>"open computer vision" / "enable vision"</li>
+                    <li>"close computer vision" / "disable vision"</li>
+                  </ul>
+                </AlertDescription>
+              </Alert>
+
+              {isListening && (
+                <Alert className="bg-primary/10 text-primary border-primary/50 animate-pulse">
+                  <AlertTitle>Listening...</AlertTitle>
                   <AlertDescription>
-                    Please allow camera access to use this feature.
+                    I'm listening to your voice command. Speak clearly.
                   </AlertDescription>
                 </Alert>
-              )
-            }
-        </div>
-        {objectDetections.length > 0 && (
-          <div className="mt-4">
-            <h3 className="text-lg font-semibold text-muted-foreground">Detected Objects:</h3>
-            <ul>
-              {objectDetections.map((prediction, index) => (
-                <li key={index}>
-                  {prediction.class} (Confidence: {(prediction.score * 100).toFixed(1)}%)
-                </li>
-              ))}
-            </ul>
+              )}
+              
+              {voiceCommand && (
+                <div className="p-4 border border-green-300 rounded-md bg-green-50">
+                  <p className="font-medium text-sm text-green-800">Recognized Command:</p>
+                  <p className="text-lg">{voiceCommand}</p>
+                </div>
+              )}
+              
+              <Textarea
+                placeholder="Enter text command here..."
+                value={voiceCommand}
+                onChange={(e) => setVoiceCommand(e.target.value)}
+                className="h-24 resize-none"
+              />
+              
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  onClick={startListening}
+                  disabled={isListening}
+                  className="bg-blue-600 hover:bg-blue-700 transition-colors flex items-center gap-2"
+                >
+                  {isListening ? 'Listening...' : 'Start Voice Recognition'}
+                </Button>
+                <Button
+                  onClick={stopListening}
+                  disabled={!isListening}
+                  variant="outline"
+                  className="border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700 transition-colors"
+                >
+                  Stop Listening
+                </Button>
+                <Button
+                  onClick={handleVoiceCommand}
+                  disabled={!voiceCommand}
+                  className="bg-green-600 hover:bg-green-700 transition-colors"
+                >
+                  Process Command
+                </Button>
+              </div>
+
+              {clarifiedCommand && (
+                <div className="p-4 border border-blue-300 rounded-md bg-blue-50">
+                  <p className="font-medium text-sm text-blue-800">Clarified Command:</p>
+                  <p>{clarifiedCommand}</p>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card className="mb-4">
+        <CardHeader>
+          <div className="flex justify-between items-center">
+            <CardTitle>Computer Vision</CardTitle>
+            <Button
+              onClick={() => setIsVisionEnabled(!isVisionEnabled)}
+              variant={isVisionEnabled ? "destructive" : "default"}
+              className="ml-4"
+            >
+              {isVisionEnabled ? "Disable Vision" : "Enable Vision"}
+            </Button>
           </div>
-        )}
-      </section>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            {!isVisionEnabled && (
+              <Alert className="mb-4">
+                <AlertTitle>Computer Vision Disabled</AlertTitle>
+                <AlertDescription>
+                  Enable computer vision to start object detection
+                </AlertDescription>
+              </Alert>
+            )}
+            
+            {isVisionEnabled && objectDetections.length > 0 && (
+              <Alert className="mb-4">
+                <AlertTitle>Objects Detected</AlertTitle>
+                <AlertDescription>
+                  {objectDetections.map((obj, index) => (
+                    <div key={index}>
+                      {obj.class} (Confidence: {Math.round(obj.score * 100)}%)
+                    </div>
+                  ))}
+                </AlertDescription>
+              </Alert>
+            )}
+
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              className="w-full aspect-video bg-gray-100 rounded-lg"
+            />
+          </div>
+        </CardContent>
+      </Card>
+      <Toaster />
     </div>
   );
 }
