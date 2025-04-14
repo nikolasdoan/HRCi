@@ -202,13 +202,13 @@ export default function Home() {
         predictions.forEach(prediction => {
           if (prediction.class === 'person') {
             setRobotAction('Initiate security protocol');
-            if (synthRef.current) {
+            /*if (synthRef.current) {
               const utterance = new SpeechSynthesisUtterance('Initiating security protocol due to person detection.');
               synthRef.current.speak(utterance);
-            }
+            }*/
           } else if (prediction.class === 'cell phone') {
             setRobotAction('Start robot interaction sequence');
-            if (synthRef.current) {
+            /*if (synthRef.current) {
               const utterance = new SpeechSynthesisUtterance('Starting robot interaction sequence due to cell phone detection.');
               synthRef.current.speak(utterance);
             } else {
@@ -217,7 +217,7 @@ export default function Home() {
                 const utterance = new SpeechSynthesisUtterance('Object Detected.');
                 synthRef.current.speak(utterance);
               }
-            }
+            }*/
           }
         });
       }
@@ -334,4 +334,3 @@ export default function Home() {
     </div>
   );
 }
-
