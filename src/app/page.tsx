@@ -3,13 +3,15 @@
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { detectObjectAndTriggerAction, DetectObjectOutput } from "@/ai/flows/detect-objects";
 import { processVoiceCommand } from "@/ai/flows/process-voice-command";
 import { clarifyRequirements } from "@/ai/flows/clarify-requirements";
 import { useToast } from "@/hooks/use-toast";
 import { Toaster } from "@/components/ui/toaster";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Textarea } from "@/components/ui/textarea";
+
+// Import MediaPipe dependencies
+import { FilesetResolver, ObjectDetector, ObjectDetectorResult } from "@google-mediapipe/tasks-vision";
 
 const ROBOT_ACTIONS = [
   "Move Forward",
@@ -25,14 +27,15 @@ export default function Home() {
   const [voiceCommand, setVoiceCommand] = useState("");
   const [clarifiedCommand, setClarifiedCommand] = useState("");
   const [robotAction, setRobotAction] = useState("");
-  const [cameraStream, setCameraStream] = useState<string | null>(null);
-  const [objectDetectionResult, setObjectDetectionResult] = useState<DetectObjectOutput | null>(null);
+  const [objectDetectionResult, setObjectDetectionResult] = useState<ObjectDetectorResult | null>(null);
   const { toast } = useToast();
   const [isListening, setIsListening] = useState(false);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const synthRef = useRef<SpeechSynthesis | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [hasCameraPermission, setHasCameraPermission] = useState(false);
+	const [objectDetector, setObjectDetector] = useState<ObjectDetector | null>(null);
+
 
   useEffect(() => {
     const getCameraPermission = async () => {
@@ -74,7 +77,11 @@ export default function Home() {
 
           recognitionRef.current.onstart = () => {
             setIsListening(true);
-            playAudioFeedback("Listening...");
+            // Mimic audio feedback using speech synthesis
+            if (synthRef.current) {
+              const utterance = new SpeechSynthesisUtterance("Listening...");
+              synthRef.current.speak(utterance);
+            }
           };
 
           recognitionRef.current.onresult = (event: SpeechRecognitionEvent) => {
@@ -92,7 +99,6 @@ export default function Home() {
           recognitionRef.current.onerror = (event: SpeechRecognitionErrorEvent) => {
             console.error("Speech recognition error:", event.error);
             setIsListening(false);
-            playAudioFeedback(`Error: ${event.error}`);
             toast({
               variant: "destructive",
               title: "Speech Recognition Error",
@@ -108,7 +114,6 @@ export default function Home() {
         }
 
         speechSynthesis = window.speechSynthesis;
-
         synthRef.current = speechSynthesis;
       }
     };
@@ -128,17 +133,13 @@ export default function Home() {
     }
   };
 
-  // Mimic audio feedback using speech synthesis
-  const playAudioFeedback = (message: string) => {
-    if (synthRef.current && message) {
-      const utterance = new SpeechSynthesisUtterance(message);
-      synthRef.current.speak(utterance);
-    }
-  };
-
   const handleActionClick = (action: string) => {
     setRobotAction(action);
-    playAudioFeedback(`Executing action: ${action}`);
+    // Mimic audio feedback using speech synthesis
+    if (synthRef.current) {
+      const utterance = new SpeechSynthesisUtterance(`Executing action: ${action}`);
+      synthRef.current.speak(utterance);
+    }
   };
 
   const handleVoiceCommand = async () => {
@@ -148,10 +149,14 @@ export default function Home() {
 
       const aiResult = await processVoiceCommand({ voiceCommand: clarification.clarifiedCommand });
       setRobotAction(aiResult.action);
-      playAudioFeedback(aiResult.feedback);
+
+      // Mimic audio feedback using speech synthesis
+      if (synthRef.current) {
+        const utterance = new SpeechSynthesisUtterance(aiResult.feedback);
+        synthRef.current.speak(utterance);
+      }
     } catch (error: any) {
       console.error("Error processing voice command:", error);
-      playAudioFeedback(`Error: ${error.message || "Failed to process voice command"}`);
       toast({
         variant: "destructive",
         title: "Voice Command Error",
@@ -160,42 +165,86 @@ export default function Home() {
     }
   };
 
-  const handleObjectDetection = async () => {
-    if (!videoRef.current) {
-      playAudioFeedback("Camera stream is not available.");
-      toast({
-        variant: "destructive",
-        title: "Camera Error",
-        description: "Camera stream is not available.",
-      });
-      return;
-    }
+    useEffect(() => {
+        const initializeMediaPipe = async () => {
+            try {
+                const vision = await FilesetResolver.forVisionTasks(
+                    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
+                );
+                const detector = await ObjectDetector.createFromOptions(vision, {
+                    baseOptions: {
+                        modelAssetPath: `https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite`,
+                        delegate: "GPU"
+                    },
+                    maxResults: 5,
+                    scoreThreshold: 0.5
+                });
+                setObjectDetector(detector);
+            } catch (error: any) {
+                console.error("Error initializing MediaPipe:", error);
+                toast({
+                    variant: "destructive",
+                    title: "MediaPipe Initialization Error",
+                    description: error.message || "Failed to initialize MediaPipe."
+                });
+            }
+        };
 
-    // Capture a frame from the video stream as a base64 encoded image
-    const canvas = document.createElement('canvas');
-    canvas.width = videoRef.current.videoWidth;
-    canvas.height = videoRef.current.videoHeight;
-    const ctx = canvas.getContext('2d');
-    ctx?.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-    const imageBase64 = canvas.toDataURL('image/jpeg');
+        initializeMediaPipe();
+    }, [toast]);
 
-    try {
-      const detectionResult = await detectObjectAndTriggerAction({ imageBase64: imageBase64 });
-      setObjectDetectionResult(detectionResult);
-      detectionResult.actions.forEach((action) => {
-        playAudioFeedback(`Object Detected Action: ${action}`);
-        setRobotAction(action); // Set the robot action based on detected object
-      });
-    } catch (error: any) {
-      console.error("Error detecting objects:", error);
-      playAudioFeedback(`Error: ${error.message || "Failed to detect objects"}`);
-      toast({
-        variant: "destructive",
-        title: "Object Detection Error",
-        description: error.message || "Failed to detect objects",
-      });
-    }
-  };
+
+    const handleObjectDetection = async () => {
+        if (!videoRef.current || !objectDetector) {
+            toast({
+                variant: "destructive",
+                title: "Object Detection Error",
+                description: "Camera stream or object detector not available."
+            });
+            return;
+        }
+
+        try {
+            const video = videoRef.current;
+            const results = objectDetector.detectForVideo(video, Date.now());
+            setObjectDetectionResult(results);
+
+            // Trigger actions based on detected objects
+            if (results.detections && results.detections.length > 0) {
+                results.detections.forEach(detection => {
+                    const label = detection.categories[0].categoryName;
+                    if (label === 'person') {
+                        setRobotAction('Initiate security protocol');
+                        // Mimic audio feedback using speech synthesis
+                        if (synthRef.current) {
+                            const utterance = new SpeechSynthesisUtterance("Initiating security protocol due to person detection.");
+                            synthRef.current.speak(utterance);
+                        }
+                    } else if (label === 'cell phone') {
+                        setRobotAction('Start robot interaction sequence');
+                        // Mimic audio feedback using speech synthesis
+                        if (synthRef.current) {
+                            const utterance = new SpeechSynthesisUtterance("Starting robot interaction sequence due to cell phone detection.");
+                            synthRef.current.speak(utterance);
+                        }
+                    } else {
+                      setRobotAction('Object Detected');
+                      if (synthRef.current) {
+                        const utterance = new SpeechSynthesisUtterance("Object Detected.");
+                        synthRef.current.speak(utterance);
+                    }
+                    }
+                });
+            }
+        } catch (error: any) {
+            console.error("Object detection error:", error);
+            toast({
+                variant: "destructive",
+                title: "Object Detection Error",
+                description: error.message || "Failed to detect objects."
+            });
+        }
+    };
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-4">
@@ -267,27 +316,22 @@ export default function Home() {
             <Button
               onClick={handleObjectDetection}
               className="absolute top-2 right-2 bg-accent text-primary-foreground hover:bg-accent-foreground hover:text-primary rounded-full"
+              disabled={!objectDetector}
             >
               Detect Objects
             </Button>
         </div>
-        {objectDetectionResult && (
-          <div className="mt-4">
-            <h3 className="text-lg font-semibold text-muted-foreground">Detection Results:</h3>
-            <ul>
-              {objectDetectionResult.detectedObjects.map((obj) => (
-                <li key={obj.label}>
-                  {obj.label} (Confidence: {obj.confidence})
-                </li>
-              ))}
-            </ul>
-            <h3 className="text-lg font-semibold text-muted-foreground">Triggered Actions:</h3>
-            <ul>
-              {objectDetectionResult.actions.map((action, index) => (
-                <li key={index}>{action}</li>
-              ))}
-            </ul>
-          </div>
+        {objectDetectionResult && objectDetectionResult.detections && (
+            <div className="mt-4">
+                <h3 className="text-lg font-semibold text-muted-foreground">Detection Results:</h3>
+                <ul>
+                    {objectDetectionResult.detections.map((detection, index) => (
+                        <li key={index}>
+                            {detection.categories[0].categoryName} (Confidence: {detection.categories[0].score})
+                        </li>
+                    ))}
+                </ul>
+            </div>
         )}
       </section>
     </div>
