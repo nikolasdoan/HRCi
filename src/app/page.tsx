@@ -174,7 +174,10 @@ export default function Home() {
     try {
       const detectionResult = await detectObjectAndTriggerAction({ imageBase64: cameraStream });
       setObjectDetectionResult(detectionResult);
-      detectionResult.actions.forEach((action) => playAudioFeedback(action));
+      detectionResult.actions.forEach((action) => {
+        playAudioFeedback(`Object Detected Action: ${action}`);
+        setRobotAction(action); // Set the robot action based on detected object
+      });
     } catch (error: any) {
       console.error("Error detecting objects:", error);
       playAudioFeedback(`Error: ${error.message || "Failed to detect objects"}`);
