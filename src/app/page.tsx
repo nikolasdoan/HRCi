@@ -10,8 +10,9 @@ import { Toaster } from "@/components/ui/toaster";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Textarea } from "@/components/ui/textarea";
 
-// Import MediaPipe dependencies
-import { FilesetResolver, ObjectDetector, ObjectDetectorResult } from "@google-mediapipe/tasks-vision";
+// Import TensorFlow.js dependencies
+import * as tf from '@tensorflow/tfjs';
+import * as cocoSsd from '@tensorflow-models/coco-ssd';
 
 const ROBOT_ACTIONS = [
   "Move Forward",
@@ -27,15 +28,33 @@ export default function Home() {
   const [voiceCommand, setVoiceCommand] = useState("");
   const [clarifiedCommand, setClarifiedCommand] = useState("");
   const [robotAction, setRobotAction] = useState("");
-  const [objectDetectionResult, setObjectDetectionResult] = useState<ObjectDetectorResult | null>(null);
   const { toast } = useToast();
   const [isListening, setIsListening] = useState(false);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const synthRef = useRef<SpeechSynthesis | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [hasCameraPermission, setHasCameraPermission] = useState(false);
-	const [objectDetector, setObjectDetector] = useState<ObjectDetector | null>(null);
+  const [objectDetections, setObjectDetections] = useState<any[]>([]);
+  const [model, setModel] = useState<cocoSsd.ObjectDetection | null>(null);
 
+  useEffect(() => {
+    const loadModel = async () => {
+      try {
+        await tf.ready();
+        const loadedModel = await cocoSsd.load();
+        setModel(loadedModel);
+      } catch (error: any) {
+        console.error("Failed to load TensorFlow.js model:", error);
+        toast({
+          variant: "destructive",
+          title: "TensorFlow.js Load Error",
+          description: error.message || "Failed to load the object detection model.",
+        });
+      }
+    };
+
+    loadModel();
+  }, [toast]);
 
   useEffect(() => {
     const getCameraPermission = async () => {
@@ -165,86 +184,71 @@ export default function Home() {
     }
   };
 
-    useEffect(() => {
-        const initializeMediaPipe = async () => {
-            try {
-                const vision = await FilesetResolver.forVisionTasks(
-                    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
-                );
-                const detector = await ObjectDetector.createFromOptions(vision, {
-                    baseOptions: {
-                        modelAssetPath: `https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite`,
-                        delegate: "GPU"
-                    },
-                    maxResults: 5,
-                    scoreThreshold: 0.5
-                });
-                setObjectDetector(detector);
-            } catch (error: any) {
-                console.error("Error initializing MediaPipe:", error);
-                toast({
-                    variant: "destructive",
-                    title: "MediaPipe Initialization Error",
-                    description: error.message || "Failed to initialize MediaPipe."
-                });
+  const detectObjects = async () => {
+    if (!videoRef.current || !model) {
+      toast({
+        variant: 'destructive',
+        title: 'Object Detection Error',
+        description: 'Video stream or object detection model not available.',
+      });
+      return;
+    }
+
+    try {
+      const predictions = await model.detect(videoRef.current);
+      setObjectDetections(predictions);
+
+      if (predictions && predictions.length > 0) {
+        predictions.forEach(prediction => {
+          if (prediction.class === 'person') {
+            setRobotAction('Initiate security protocol');
+            if (synthRef.current) {
+              const utterance = new SpeechSynthesisUtterance('Initiating security protocol due to person detection.');
+              synthRef.current.speak(utterance);
             }
-        };
-
-        initializeMediaPipe();
-    }, [toast]);
-
-
-    const handleObjectDetection = async () => {
-        if (!videoRef.current || !objectDetector) {
-            toast({
-                variant: "destructive",
-                title: "Object Detection Error",
-                description: "Camera stream or object detector not available."
-            });
-            return;
-        }
-
-        try {
-            const video = videoRef.current;
-            const results = objectDetector.detectForVideo(video, Date.now());
-            setObjectDetectionResult(results);
-
-            // Trigger actions based on detected objects
-            if (results.detections && results.detections.length > 0) {
-                results.detections.forEach(detection => {
-                    const label = detection.categories[0].categoryName;
-                    if (label === 'person') {
-                        setRobotAction('Initiate security protocol');
-                        // Mimic audio feedback using speech synthesis
-                        if (synthRef.current) {
-                            const utterance = new SpeechSynthesisUtterance("Initiating security protocol due to person detection.");
-                            synthRef.current.speak(utterance);
-                        }
-                    } else if (label === 'cell phone') {
-                        setRobotAction('Start robot interaction sequence');
-                        // Mimic audio feedback using speech synthesis
-                        if (synthRef.current) {
-                            const utterance = new SpeechSynthesisUtterance("Starting robot interaction sequence due to cell phone detection.");
-                            synthRef.current.speak(utterance);
-                        }
-                    } else {
-                      setRobotAction('Object Detected');
-                      if (synthRef.current) {
-                        const utterance = new SpeechSynthesisUtterance("Object Detected.");
-                        synthRef.current.speak(utterance);
-                    }
-                    }
-                });
+          } else if (prediction.class === 'cell phone') {
+            setRobotAction('Start robot interaction sequence');
+            if (synthRef.current) {
+              const utterance = new SpeechSynthesisUtterance('Starting robot interaction sequence due to cell phone detection.');
+              synthRef.current.speak(utterance);
+            } else {
+              setRobotAction('Object Detected');
+              if (synthRef.current) {
+                const utterance = new SpeechSynthesisUtterance('Object Detected.');
+                synthRef.current.speak(utterance);
+              }
             }
-        } catch (error: any) {
-            console.error("Object detection error:", error);
-            toast({
-                variant: "destructive",
-                title: "Object Detection Error",
-                description: error.message || "Failed to detect objects."
-            });
-        }
+          }
+        });
+      }
+    } catch (error: any) {
+      console.error("Object detection error:", error);
+      toast({
+        variant: 'destructive',
+        title: "Object Detection Error",
+        description: error.message || "Failed to detect objects."
+      });
+    }
+  };
+
+  useEffect(() => {
+    let animationFrameId: number;
+
+    const renderDetections = async () => {
+      if (hasCameraPermission && model && videoRef.current) {
+        detectObjects(); // Call detectObjects directly here
+
+        animationFrameId = requestAnimationFrame(renderDetections);
+      }
     };
+
+    renderDetections();
+
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+    };
+  }, [hasCameraPermission, model]);
+
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-4">
@@ -313,25 +317,18 @@ export default function Home() {
                 </Alert>
               )
             }
-            <Button
-              onClick={handleObjectDetection}
-              className="absolute top-2 right-2 bg-accent text-primary-foreground hover:bg-accent-foreground hover:text-primary rounded-full"
-              disabled={!objectDetector}
-            >
-              Detect Objects
-            </Button>
         </div>
-        {objectDetectionResult && objectDetectionResult.detections && (
-            <div className="mt-4">
-                <h3 className="text-lg font-semibold text-muted-foreground">Detection Results:</h3>
-                <ul>
-                    {objectDetectionResult.detections.map((detection, index) => (
-                        <li key={index}>
-                            {detection.categories[0].categoryName} (Confidence: {detection.categories[0].score})
-                        </li>
-                    ))}
-                </ul>
-            </div>
+        {objectDetections.length > 0 && (
+          <div className="mt-4">
+            <h3 className="text-lg font-semibold text-muted-foreground">Detected Objects:</h3>
+            <ul>
+              {objectDetections.map((prediction, index) => (
+                <li key={index}>
+                  {prediction.class} (Confidence: {(prediction.score * 100).toFixed(1)}%)
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
       </section>
     </div>
