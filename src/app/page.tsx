@@ -161,7 +161,7 @@ export default function Home() {
   };
 
   const handleObjectDetection = async () => {
-    if (!cameraStream) {
+    if (!videoRef.current) {
       playAudioFeedback("Camera stream is not available.");
       toast({
         variant: "destructive",
@@ -171,8 +171,16 @@ export default function Home() {
       return;
     }
 
+    // Capture a frame from the video stream as a base64 encoded image
+    const canvas = document.createElement('canvas');
+    canvas.width = videoRef.current.videoWidth;
+    canvas.height = videoRef.current.videoHeight;
+    const ctx = canvas.getContext('2d');
+    ctx?.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+    const imageBase64 = canvas.toDataURL('image/jpeg');
+
     try {
-      const detectionResult = await detectObjectAndTriggerAction({ imageBase64: cameraStream });
+      const detectionResult = await detectObjectAndTriggerAction({ imageBase64: imageBase64 });
       setObjectDetectionResult(detectionResult);
       detectionResult.actions.forEach((action) => {
         playAudioFeedback(`Object Detected Action: ${action}`);
@@ -188,25 +196,6 @@ export default function Home() {
       });
     }
   };
-
-  // Simulate camera access and stream (replace with actual camera logic)
-  useEffect(() => {
-    const simulateCameraStream = () => {
-      // Replace with actual camera stream access
-      const placeholderImage = "https://picsum.photos/640/480";
-      fetch(placeholderImage)
-        .then(response => response.blob())
-        .then(blob => {
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            setCameraStream(reader.result as string);
-          };
-          reader.readAsDataURL(blob);
-        });
-    };
-
-    simulateCameraStream(); // Start the "camera" when the component mounts
-  }, []);
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-4">
@@ -264,18 +253,16 @@ export default function Home() {
       {/* Object Detection */}
       <section className="mt-8 w-full max-w-4xl">
         <h2 className="text-2xl font-semibold text-primary mb-4">Object Detection</h2>
-        {cameraStream ? (
-          <div className="relative">
-            <video ref={videoRef} className="w-full aspect-video rounded-md" autoPlay muted />
-
+        <div className="relative">
+          <video ref={videoRef} className="w-full aspect-video rounded-md" autoPlay muted />
             { !(hasCameraPermission) && (
                 <Alert variant="destructive">
-                          <AlertTitle>Camera Access Required</AlertTitle>
-                          <AlertDescription>
-                            Please allow camera access to use this feature.
-                          </AlertDescription>
-                  </Alert>
-            )
+                  <AlertTitle>Camera Access Required</AlertTitle>
+                  <AlertDescription>
+                    Please allow camera access to use this feature.
+                  </AlertDescription>
+                </Alert>
+              )
             }
             <Button
               onClick={handleObjectDetection}
@@ -283,10 +270,7 @@ export default function Home() {
             >
               Detect Objects
             </Button>
-          </div>
-        ) : (
-          <p>Camera stream unavailable.</p>
-        )}
+        </div>
         {objectDetectionResult && (
           <div className="mt-4">
             <h3 className="text-lg font-semibold text-muted-foreground">Detection Results:</h3>
