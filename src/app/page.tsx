@@ -11,6 +11,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Textarea } from "@/components/ui/textarea";
 import React from 'react';
 import { EyeIcon, InformationCircleIcon, MicrophoneIcon, PlayIcon } from "@heroicons/react/24/outline";
+import RobotMap from "@/components/RobotMap";
 
 // Import TensorFlow.js dependencies
 import * as tf from '@tensorflow/tfjs';
@@ -151,6 +152,11 @@ export default function Home() {
 
   const [showCommandInfo, setShowCommandInfo] = useState(false);
 
+  // Add state for robot position and path
+  const [robotPosition, setRobotPosition] = useState({ x: 0, y: 0 });
+  const [robotPath, setRobotPath] = useState([{ x: 0, y: 0 }]);
+  const [robotDirection, setRobotDirection] = useState(0); // 0 degrees = facing right
+
   // Function to handle robot action execution with timeout
   const executeRobotAction = (action: string, shouldAnnounce: boolean = true) => {
     // Special handling for emergency stop action
@@ -180,7 +186,89 @@ export default function Home() {
       });
       return;
     }
-
+    
+    // Parse the action to update robot position and direction
+    const actionLower = action.toLowerCase();
+    
+    // Handle turning actions
+    if (actionLower.includes('turn')) {
+      let newDirection = robotDirection;
+      
+      if (actionLower.includes('left')) {
+        // Extract degrees if specified, otherwise use 90
+        const degreesMatch = actionLower.match(/(\d+)\s*degrees?/);
+        const degrees = degreesMatch ? parseInt(degreesMatch[1]) : 90;
+        newDirection = (robotDirection + degrees) % 360;
+      } else if (actionLower.includes('right')) {
+        const degreesMatch = actionLower.match(/(\d+)\s*degrees?/);
+        const degrees = degreesMatch ? parseInt(degreesMatch[1]) : 90;
+        newDirection = (robotDirection - degrees + 360) % 360;
+      }
+      
+      setRobotDirection(newDirection);
+      
+      // Announce the turn
+      if (synthRef.current && shouldAnnounce) {
+        const degreesMatch = actionLower.match(/(\d+)\s*degrees?/);
+        const degreesText = degreesMatch ? `${degreesMatch[1]} degrees` : '90 degrees';
+        const direction = actionLower.includes('left') ? 'left' : 'right';
+        const utterance = new SpeechSynthesisUtterance(`Turning ${direction} ${degreesText}`);
+        utterance.volume = 0.8;
+        utterance.rate = 1.0;
+        synthRef.current.speak(utterance);
+      }
+    }
+    
+    // Handle movement actions
+    if (actionLower.includes('move') || actionLower.includes('forward') || actionLower.includes('backward') || 
+        actionLower.includes('go forward') || actionLower.includes('go backward')) {
+      let steps = 1;
+      const stepsMatch = actionLower.match(/(\d+)\s*steps?/);
+      if (stepsMatch) {
+        steps = parseInt(stepsMatch[1]);
+      }
+      
+      // Determine if moving forward or backward
+      const isBackward = actionLower.includes('backward') || actionLower.includes('back');
+      
+      // Calculate new position based on direction
+      const radians = (robotDirection * Math.PI) / 180;
+      const dx = Math.cos(radians) * steps * (isBackward ? -1 : 1);
+      const dy = Math.sin(radians) * steps * (isBackward ? -1 : 1);
+      
+      const newPosition = {
+        x: robotPosition.x + dx,
+        y: robotPosition.y + dy
+      };
+      
+      setRobotPosition(newPosition);
+      setRobotPath([...robotPath, newPosition]);
+      
+      // Announce the movement
+      if (synthRef.current && shouldAnnounce) {
+        const direction = isBackward ? 'backward' : 'forward';
+        const utterance = new SpeechSynthesisUtterance(`Moving ${direction} ${steps} ${steps > 1 ? 'steps' : 'step'}`);
+        utterance.volume = 0.8;
+        utterance.rate = 1.0;
+        synthRef.current.speak(utterance);
+      }
+    }
+    
+    // Handle return to origin command
+    if (actionLower.includes('return to origin') || actionLower.includes('go back to start')) {
+      // Reset position to origin
+      setRobotPosition({ x: 0, y: 0 });
+      setRobotPath([{ x: 0, y: 0 }]);
+      
+      // Announce return to origin
+      if (synthRef.current && shouldAnnounce) {
+        const utterance = new SpeechSynthesisUtterance("Returning to origin");
+        utterance.volume = 0.8;
+        utterance.rate = 1.0;
+        synthRef.current.speak(utterance);
+      }
+    }
+    
     // Don't start new action if one is in progress
     if (isActionInProgress) {
       toast({
@@ -491,11 +579,19 @@ export default function Home() {
 
   const handleVoiceCommand = async () => {
     try {
-      const clarification = await clarifyRequirements({ command: voiceCommand });
-      setClarifiedCommand(clarification.clarifiedCommand);
+      const result = await processVoiceCommand({ voiceCommand });
+      
+      // If clarification is needed, ask for it
+      if (result.needsClarification) {
+        const clarification = await clarifyRequirements({ 
+          command: voiceCommand,
+          clarificationType: result.clarificationType
+        });
+        setClarifiedCommand(clarification.clarifiedCommand);
+      }
 
       // Check for vision control commands
-      const lowerCommand = clarification.clarifiedCommand.toLowerCase();
+      const lowerCommand = clarifiedCommand.toLowerCase();
       if (lowerCommand.includes("enable vision") || 
           lowerCommand.includes("turn on vision") || 
           lowerCommand.includes("open computer vision") ||
@@ -520,12 +616,11 @@ export default function Home() {
         return;
       }
 
-      const aiResult = await processVoiceCommand({ voiceCommand: clarification.clarifiedCommand });
-      executeRobotAction(aiResult.action);
+      executeRobotAction(result.action);
 
       // Mimic audio feedback using speech synthesis
       if (synthRef.current) {
-        const utterance = new SpeechSynthesisUtterance(aiResult.feedback);
+        const utterance = new SpeechSynthesisUtterance(result.feedback);
         synthRef.current.speak(utterance);
       }
     } catch (error: any) {
@@ -933,6 +1028,23 @@ export default function Home() {
             </CardContent>
           </Card>
         </div>
+      </div>
+
+      {/* Add the RobotMap component */}
+      <div className="w-full max-w-3xl mb-8">
+        <Card>
+          <CardHeader>
+            <CardTitle>Robot Position</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <RobotMap
+              currentPosition={robotPosition}
+              path={robotPath}
+              direction={robotDirection}
+              gridSize={11}
+            />
+          </CardContent>
+        </Card>
       </div>
 
       <Toaster />

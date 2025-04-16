@@ -13,11 +13,13 @@ import {z} from 'genkit';
 
 const ClarifyRequirementsInputSchema = z.object({
   command: z.string().describe('The potentially ambiguous voice command.'),
+  clarificationType: z.enum(['direction', 'distance', 'angle', 'none']).describe('The type of clarification needed.'),
 });
 export type ClarifyRequirementsInput = z.infer<typeof ClarifyRequirementsInputSchema>;
 
 const ClarifyRequirementsOutputSchema = z.object({
   clarifiedCommand: z.string().describe('The clarified voice command after asking clarifying questions.'),
+  isComplete: z.boolean().describe('Whether the command is now complete and ready for execution.'),
 });
 export type ClarifyRequirementsOutput = z.infer<typeof ClarifyRequirementsOutputSchema>;
 
@@ -30,33 +32,58 @@ const clarifyRequirementsPrompt = ai.definePrompt({
   input: {
     schema: z.object({
       command: z.string().describe('The potentially ambiguous voice command.'),
+      clarificationType: z.enum(['direction', 'distance', 'angle', 'none']).describe('The type of clarification needed.'),
     }),
   },
   output: {
     schema: z.object({
       clarifiedCommand: z.string().describe('The clarified voice command after asking clarifying questions.'),
+      isComplete: z.boolean().describe('Whether the command is now complete and ready for execution.'),
     }),
   },
   prompt: `You are a helpful AI assistant that helps clarify ambiguous voice commands from the user.
 
 The user has given the following voice command: {{{command}}}
+The type of clarification needed is: {{{clarificationType}}}
 
-If the command is ambiguous, you should ask clarifying questions to determine the user's intent.
-If the command is clear, you should simply repeat the command.
+Based on the clarification type, ask the appropriate clarifying question:
 
-Example 1:
-User: "Move forward."
-Assistant: "How many steps forward should I move?"
+For 'direction':
+- If the command involves turning but direction is unclear, ask "Which direction should I turn, left or right?"
+- If the command involves moving but direction is unclear, ask "Which direction should I move?"
 
-Example 2:
-User: "Turn."
-Assistant: "Which direction should I turn, left or right?"
+For 'angle':
+- If turning but angle is unclear, ask "How many degrees should I turn?"
 
-Example 3:
-User: "Move forward 5 steps."
-Assistant: "Move forward 5 steps."
+For 'distance':
+- If moving but distance is unclear, ask "How far should I move?"
 
-What clarifying questions should be asked, if any?  If there are no questions to ask, simply repeat the command to confirm.
+For 'none':
+- Simply confirm the command is clear and ready for execution
+
+Example responses:
+1. For command "turn" with clarificationType "direction":
+{
+  "clarifiedCommand": "turn",
+  "isComplete": false,
+  "feedback": "Which direction should I turn, left or right?"
+}
+
+2. For command "turn left" with clarificationType "none":
+{
+  "clarifiedCommand": "turn left 90 degrees",
+  "isComplete": true,
+  "feedback": "Turning left 90 degrees"
+}
+
+3. For command "move" with clarificationType "distance":
+{
+  "clarifiedCommand": "move",
+  "isComplete": false,
+  "feedback": "How far should I move?"
+}
+
+Provide a response that includes both the clarifying question and whether the command is now complete.
 `,
 });
 

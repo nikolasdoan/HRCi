@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ammo.js Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            line-height: 1.6;
+        }
+        #output {
+            background-color: #f5f5f5;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 20px;
+            white-space: pre-wrap;
+        }
+        .success {
+            color: green;
+        }
+        .error {
+            color: red;
+        }
+    </style>
+</head>
+<body>
+    <h1>Ammo.js Test</h1>
+    <p>This page tests if Ammo.js is loading correctly.</p>
+    <div id="output">Loading...</div>
+    
+    <script type="module">
+        import Ammo from './node_modules/ammo.js/ammo.js';
+        
+        const output = document.getElementById('output');
+        
+        function log(message, isError = false) {
+            const line = document.createElement('div');
+            line.textContent = message;
+            if (isError) {
+                line.classList.add('error');
+            } else {
+                line.classList.add('success');
+            }
+            output.appendChild(line);
+            console.log(message);
+        }
+        
+        try {
+            // Check if Ammo.js is loaded
+            if (typeof Ammo === 'undefined') {
+                log('Ammo.js is not loaded!', true);
+            } else {
+                log('Ammo.js loaded successfully');
+                
+                // Try to create a simple physics object
+                const collisionConfiguration = new Ammo.btDefaultCollisionConfiguration();
+                log('Created collision configuration');
+                
+                const dispatcher = new Ammo.btCollisionDispatcher(collisionConfiguration);
+                log('Created collision dispatcher');
+                
+                const broadphase = new Ammo.btDbvtBroadphase();
+                log('Created broadphase');
+                
+                const solver = new Ammo.btSequentialImpulseConstraintSolver();
+                log('Created solver');
+                
+                const physicsWorld = new Ammo.btDiscreteDynamicsWorld(
+                    dispatcher,
+                    broadphase,
+                    solver,
+                    collisionConfiguration
+                );
+                log('Created physics world');
+                
+                physicsWorld.setGravity(new Ammo.btVector3(0, -9.81, 0));
+                log('Set gravity');
+                
+                log('Ammo.js test completed successfully');
+            }
+        } catch (e) {
+            log(`Error testing Ammo.js: ${e.message}`, true);
+            console.error(e);
+        }
+    </script>
+</body>
+</html> 
